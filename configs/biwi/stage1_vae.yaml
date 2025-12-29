@@ -1,0 +1,77 @@
+NAME: vqvae_biwi
+ACCELERATOR: 'gpu'
+DEVICE: [0]
+DEBUG: False
+STAGE: stage1_biwi
+
+LOGGER:
+  SAVE_CKPT_EPOCH: 50
+  LOG_EPOCH: 10
+  VAL_EPOCH: 10
+  TENSORBOARD: True
+  WANDB:
+    PROJECT: null
+    OFFLINE: False
+    RESUME_ID: null
+
+DATASET:
+  NAME: 'biwi'
+  DATA_ROOT: ./data/biwi
+
+# save exp logs and ckpt
+FOLDER: './experiments/biwi'
+
+LOSS:
+  TYPE: 'biwi'
+  RECON_LOSS: 1
+  EMBED_LOSS: 1
+  DIST_SYNC_ON_STEP: True
+
+TRAIN:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 4
+  # RESUME: './checkpoints/biwi_vae.ckpt'
+  END_EPOCH: 400
+  OPTIMIZER:
+    TYPE: AdamW
+    LR: 1e-4
+  SCHEDULER:
+    use: True
+    step_size: 40
+    gamma: 0.5
+
+VAL:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 4
+
+TEST:
+  FOLDER: './results'
+  CHECKPOINTS:
+  DATASETS: 'biwi'
+  BATCH_SIZE: 1
+  SPLIT: test
+  NUM_WORKERS: 4
+
+DEMO:
+  EXAMPLE: ''
+  CHECKPOINTS: ''
+  TEMPLATE: ./data/biwi/templates.pkl
+  PLY: ./data/biwi/templates/FLAME_sample.ply
+  FPS: 30
+
+MODEL:
+  TYPE: vqvae
+
+  VAE:
+    n_vert: 70110
+    n_embed: 512
+    face_quan_num: 8
+    zquant_dim: 128
+    hidden_size: 1024
+    num_hidden_layers: 6
+    num_attention_heads: 8
+    intermediate_size: 1536
+    window_size: 1
+    quant_factor: 0
+    neg: 0.2
+    INaffine: False

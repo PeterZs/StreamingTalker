@@ -1,0 +1,131 @@
+NAME: diff_ar_biwi
+ACCELERATOR: 'gpu'
+DEVICE: [0]
+DEBUG: False
+STAGE: stage2_diffar
+
+LOGGER:
+  SAVE_CKPT_EPOCH: 20
+  LOG_EPOCH: 20
+  VAL_EPOCH: 10
+  TENSORBOARD: True
+  WANDB:
+    PROJECT: null
+    OFFLINE: False
+    RESUME_ID: null
+
+DATASET:
+  NAME: 'biwi'
+  DATA_ROOT: ./data/biwi
+  AUDIO_DIR: 'wav'
+  VERTICE_DIR: 'vertices_npy'
+  TEMPLATE: 'templates.pkl'
+
+# save exp logs and ckpt
+FOLDER: './experiments/biwi'
+
+LOSS:
+  TYPE: 'biwi'
+  DIFF_LOSS: 1
+  VERTICE_ENC: 1
+  VERTICE_ENC_V: 1
+  LIP_ENC: 0
+  LIP_ENC_V: 0
+  DIST_SYNC_ON_STEP: True
+
+DEMO:
+  EXAMPLE: ''
+  CHECKPOINTS: ''
+  TEMPLATE: ./data/biwi/templates.pkl
+  PLY: ./data/biwi/templates/BIWI.ply
+  FPS: 25
+
+# save test output
+TEST:
+  FOLDER: './results'
+  CHECKPOINTS: './checkpoints/diffar_biwi_241212.ckpt'
+  DATASETS: 'biwi'
+  BATCH_SIZE: 1
+  SPLIT: test
+  REPLICATION_TIMES: 1
+  NUM_WORKERS: 4
+
+TRAIN:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 4
+  END_EPOCH: 200
+  OPTIMIZER:
+    TYPE: AdamW
+    LR: 1e-4
+  SCHEDULER:
+    use: False
+    step_size: 100
+    gamma: 0.5
+
+VAL:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 4
+
+MODEL:
+  TYPE: diff_ar
+
+  finetune_dec: True
+  window_size: 120
+
+  AUDIO_ENCODER:
+    audio_fps: 50
+    hidden_fps: 25
+    freeze: False
+    # model_name_or_path: 'facebook/wav2vec2-base-960h'
+    model_name_or_path: 'facebook/hubert-base-ls960'
+
+  DIFF_AR_DEC:
+    vq_dim: 1024
+    latent_dim: 1024
+    audio_encode_dim: 768
+    period: 25
+    n_heads: 4
+    max_seq_len: 600
+    id_dim: 6
+    feedforward_dim: 2048
+    num_layers: 2
+    dropout: 0.1
+    activation: gelu
+
+  VAE:
+    pretrained: './checkpoints/biwi_vae.ckpt'
+    n_vert: 70110
+    n_embed: 512
+    zquant_dim: 128
+    hidden_size: 1024
+    num_hidden_layers: 6
+    num_attention_heads: 8
+    intermediate_size: 1536
+    window_size: 1
+    quant_factor: 0
+    face_quan_num: 8
+    neg: 0.2
+    INaffine: False
+
+  SCHEDULER:
+    num_train_timesteps: 1000
+    beta_start: 0.00085
+    beta_end: 0.012
+    beta_schedule: 'scaled_linear' 
+    clip_sample: false 
+    prediction_type: 'sample'
+    set_alpha_to_one: false
+    steps_offset: 1
+
+  # extra params of scheduler funcs
+  num_inference_timesteps: 50
+  eta: 0.0
+
+  NOISE_SCHEDULER:
+    num_train_timesteps: 1000
+    beta_start: 0.00085
+    beta_end: 0.012
+    beta_schedule: 'scaled_linear' 
+    variance_type: 'fixed_small'
+    prediction_type: 'sample'
+    clip_sample: false 

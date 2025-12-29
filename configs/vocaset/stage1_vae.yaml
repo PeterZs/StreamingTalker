@@ -1,0 +1,77 @@
+NAME: vqvae_vocaset
+ACCELERATOR: 'gpu'
+DEVICE: [0]
+DEBUG: False
+STAGE: stage1_vocaset
+
+LOGGER:
+  SAVE_CKPT_EPOCH: 50
+  LOG_EPOCH: 10
+  VAL_EPOCH: 10
+  TENSORBOARD: True
+  WANDB:
+    PROJECT: null
+    OFFLINE: False
+    RESUME_ID: null
+
+DATASET:
+  NAME: 'vocaset'
+  DATA_ROOT: ./data/vocaset
+
+# save exp logs and ckpt
+FOLDER: './experiments/vocaset'
+
+LOSS:
+  TYPE: 'vocaset'
+  RECON_LOSS: 1
+  EMBED_LOSS: 1
+  DIST_SYNC_ON_STEP: True
+
+TRAIN:
+  BATCH_SIZE: 2
+  NUM_WORKERS: 4
+  # RESUME: './checkpoints/voca_vae.ckpt'
+  END_EPOCH: 300
+  OPTIMIZER:
+    TYPE: AdamW
+    LR: 1e-4
+  SCHEDULER:
+    step_size: 20
+    gamma: 0.5
+    use: True
+
+VAL:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 4
+
+TEST:
+  FOLDER: './results'
+  CHECKPOINTS:
+  DATASETS: 'vocaset'
+  BATCH_SIZE: 1
+  SPLIT: test
+  NUM_WORKERS: 4
+
+DEMO:
+  EXAMPLE: ''
+  CHECKPOINTS: ''
+  TEMPLATE: ./data/vocaset/templates.pkl
+  PLY: ./data/vocaset/templates/FLAME_sample.ply
+  FPS: 30
+
+MODEL:
+  TYPE: vqvae
+
+  VAE:
+    n_vert: 15069
+    n_embed: 256
+    face_quan_num: 16
+    zquant_dim: 64
+    hidden_size: 1024
+    num_hidden_layers: 6
+    num_attention_heads: 8
+    intermediate_size: 1536
+    window_size: 1
+    quant_factor: 0
+    neg: 0.2
+    INaffine: False

@@ -1,0 +1,132 @@
+NAME: diff_ar_ablation_vocaset
+ACCELERATOR: 'gpu'
+DEVICE: [0]
+DEBUG: False
+STAGE: stage2_diffar
+
+LOGGER:
+  SAVE_CKPT_EPOCH: 100
+  LOG_EPOCH: 50
+  VAL_EPOCH: 100
+  TENSORBOARD: True
+  WANDB:
+    PROJECT: null
+    OFFLINE: False
+    RESUME_ID: null
+
+DATASET:
+  NAME: 'vocaset'
+  DATA_ROOT: ./data/vocaset
+
+# save exp logs and ckpt
+FOLDER: './experiments/vocaset'
+
+LOSS:
+  TYPE: 'vocaset'
+  DIFF_LOSS: 1
+  VERTICE_ENC: 1
+  VERTICE_ENC_V: 1
+  LIP_ENC: 0
+  LIP_ENC_V: 0
+  DIST_SYNC_ON_STEP: True
+
+DEMO:
+  EXAMPLE: ''
+  CHECKPOINTS: ''
+  TEMPLATE: ./data/vocaset/templates.pkl
+  PLY: ./data/vocaset/templates/FLAME_sample.ply
+  FPS: 30
+
+# save test output
+TEST:
+  FOLDER: './results'
+  # CHECKPOINTS: '/home/yangyifan/Code/3dFacialAnimation/far/experiments/vocaset/diff_ar/ablation_hisrotylen01-05-15/checkpoints/epoch=399.ckpt'
+  # CHECKPOINTS: '/home/yangyifan/Code/3dFacialAnimation/far/experiments/vocaset/diff_ar/ablation_diffhead01-08-14/checkpoints/epoch=399.ckpt'
+  # CHECKPOINTS: '/home/yangyifan/Code/3dFacialAnimation/far/experiments/vocaset/diff_ar/ablation_crossattn01-08-23/checkpoints/epoch=399.ckpt'
+  # CHECKPOINTS: '/home/yangyifan/Code/3dFacialAnimation/far/experiments/vocaset/diff_ar/ablation_selfattn01-09-15/checkpoints/epoch=199.ckpt'
+  CHECKPOINTS: '/home/yangyifan/Code/3dFacialAnimation/far/experiments/vocaset/diff_ar/ablation_vae01-10-12/checkpoints/epoch=199.ckpt'
+  DATASETS: 'vocaset'
+  BATCH_SIZE: 1
+  SPLIT: test
+  REPLICATION_TIMES: 10
+  NUM_WORKERS: 2
+
+TRAIN:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 2
+  END_EPOCH: 200
+  OPTIMIZER:
+    TYPE: AdamW
+    LR: 1e-4
+  SCHEDULER:
+    use: False
+    step_size: 100
+    gamma: 0.5
+
+VAL:
+  BATCH_SIZE: 1
+  NUM_WORKERS: 2
+
+MODEL:
+  TYPE: diff_ar
+
+  finetune_dec: False
+  window_size: 60
+
+  AUDIO_ENCODER:
+    audio_fps: 50
+    hidden_fps: 30
+    freeze: False
+    # model_name_or_path: 'facebook/wav2vec2-base-960h'
+    model_name_or_path: 'facebook/hubert-base-ls960'
+
+  DIFF_AR_DEC:
+    vq_dim: 1024
+    latent_dim: 768
+    audio_encode_dim: 768
+    period: 30
+    n_heads: 4
+    max_seq_len: 2000
+    id_dim: 8
+    feedforward_dim: 1024
+    num_layers: 2
+    dropout: 0.1
+
+  VAE:
+    pretrained: '/nas/home/yangyifan/Code/3dFacialAnimation/far/experiments/vocaset/vqvae/vqvae_vocaset09-19-15/checkpoints/epoch=199.ckpt'
+    n_vert: 15069
+    n_embed: 256
+    zquant_dim: 64
+    hidden_size: 1024
+    num_hidden_layers: 6
+    num_attention_heads: 8
+    intermediate_size: 1536
+    window_size: 1
+    quant_factor: 0
+    face_quan_num: 16
+    neg: 0.2
+    INaffine: False
+
+  SCHEDULER:
+    num_train_timesteps: 1000
+    beta_start: 0.00085
+    beta_end: 0.012
+    beta_schedule: 'scaled_linear' 
+    clip_sample: false 
+    prediction_type: 'sample'
+    set_alpha_to_one: false
+    steps_offset: 1
+
+  # extra params of scheduler funcs
+  num_inference_timesteps: 50
+  # num_inference_timesteps: 100
+  eta: 0.0
+
+  NOISE_SCHEDULER:
+    num_train_timesteps: 1000
+    beta_start: 0.00085
+    beta_end: 0.012
+    beta_schedule: 'scaled_linear' 
+    variance_type: 'fixed_small'
+    prediction_type: 'sample'
+    clip_sample: false 
