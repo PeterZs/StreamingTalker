@@ -45,16 +45,16 @@ TEST:
   BATCH_SIZE: 1
   SPLIT: test
   REPLICATION_TIMES: 1
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
 
 TRAIN:
   BATCH_SIZE: 1
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
   # RESUME: ''
-  END_EPOCH: 200
+  END_EPOCH: 600
   OPTIMIZER:
     TYPE: AdamW
-    LR: 1e-4
+    LR: 1e-5
   SCHEDULER:
     use: False
     step_size: 100
@@ -62,7 +62,7 @@ TRAIN:
 
 VAL:
   BATCH_SIZE: 1
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
 
 MODEL:
   TYPE: diff_ar

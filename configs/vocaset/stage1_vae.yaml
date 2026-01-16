@@ -29,7 +29,7 @@ LOSS:
 
 TRAIN:
   BATCH_SIZE: 2
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
   # RESUME: './checkpoints/voca_vae.ckpt'
   END_EPOCH: 300
   OPTIMIZER:
@@ -42,7 +42,7 @@ TRAIN:
 
 VAL:
   BATCH_SIZE: 1
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
 
 TEST:
   FOLDER: './results'
@@ -50,7 +50,7 @@ TEST:
   DATASETS: 'vocaset'
   BATCH_SIZE: 1
   SPLIT: test
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
 
 DEMO:
   EXAMPLE: ''
