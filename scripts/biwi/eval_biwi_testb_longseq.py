@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import os
+import pickle
 import random
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -14,36 +18,16 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache_streamingtalker")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LONGSEQ_DIR = REPO_ROOT / "scripts" / "longseq"
-for item in (REPO_ROOT, LONGSEQ_DIR):
-    if str(item) not in sys.path:
-        sys.path.insert(0, str(item))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import librosa
 import numpy as np
 import torch
+from omegaconf import OmegaConf
 from transformers import Wav2Vec2Processor
 
 from algorithms.models import get_model
-from biwi_longseq_eval import (
-    BIWI_FPS,
-    MODEL_SR,
-    boundary_metrics,
-    compute_biwi_metrics,
-    load_cfg,
-    load_templates,
-    split_ranges,
-    write_csv,
-    write_json,
-)
-from biwi_testb_longseq_eval import (
-    aggregate,
-    args_cfg_path,
-    read_json,
-    read_manifest,
-    selected_clip_subset,
-    source_sentence_ids,
-)
 
 
 DEFAULT_CHECKPOINT = "checkpoints/diffar_biwi_241230.ckpt"
@@ -52,6 +36,189 @@ DEFAULT_REFERENCE_ROOT = "/m2v_intern/yangyifan20/StreamingTalker/longseq_biwi_t
 DEFAULT_PROTOCOL = "testB_long2000"
 
 TRAIN_ID_TO_INDEX = {"F2": 0, "F3": 1, "F4": 2, "M3": 3, "M4": 4, "M5": 5}
+BIWI_FPS = 25
+MODEL_SR = 16000
+BIWI_N_VERTS = 23370
+BIWI_LIP_UPPER_IDS = np.array((366, 12773, 21688, 10235, 10117), dtype=np.int64)
+BIWI_LIP_DOWNER_IDS = np.array((21538, 10665, 22962, 21152, 14028), dtype=np.int64)
+HUBERT_KERNELS = [10, 3, 3, 3, 3, 2, 2]
+HUBERT_STRIDES = [5, 2, 2, 2, 2, 2, 2]
+METRIC_FIELDS = ["LVE", "FDD", "abs_FDD", "MOD", "eval_len", "pred_len"]
+
+
+def _json_default(obj: Any) -> Any:
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().cpu().item() if obj.numel() == 1 else obj.detach().cpu().tolist()
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(type(obj).__name__)
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default) + "\n")
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text())
+
+
+def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str] | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if fieldnames is None:
+        fieldnames = []
+        for row in rows:
+            for key in row:
+                if key not in fieldnames:
+                    fieldnames.append(key)
+    with path.open("w", newline="") as fout:
+        writer = csv.DictWriter(fout, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def load_cfg(cfg_path: str, checkpoint: str, inference_steps: int | None = None) -> Any:
+    cfg = OmegaConf.merge(OmegaConf.load("./configs/base.yaml"), OmegaConf.load(cfg_path))
+    cfg.NAME = "biwi_testb_longseq_eval"
+    cfg.ACCELERATOR = "gpu" if torch.cuda.is_available() else "cpu"
+    cfg.DEVICE = [0]
+    cfg.DEBUG = False
+    cfg.DEMO.CHECKPOINTS = checkpoint
+    cfg.DEMO.TEMPLATE = "./data/biwi/templates.pkl"
+    cfg.DEMO.PLY = "./data/biwi/templates/BIWI.ply"
+    cfg.DEMO.FPS = BIWI_FPS
+    cfg.TEST.CHECKPOINTS = checkpoint
+    if inference_steps is not None:
+        cfg.MODEL.num_inference_timesteps = int(inference_steps)
+    return cfg
+
+
+def load_templates(path: str = "./data/biwi/templates.pkl") -> dict[str, np.ndarray]:
+    with open(path, "rb") as fin:
+        return pickle.load(fin, encoding="latin1")
+
+
+def hubert_feature_len(num_samples: int) -> int:
+    length = int(num_samples)
+    for kernel, stride in zip(HUBERT_KERNELS, HUBERT_STRIDES):
+        length = (length - kernel) // stride + 1
+    return max(length, 0)
+
+
+def predicted_len_from_samples(num_samples: int) -> int:
+    return int(hubert_feature_len(num_samples) * (BIWI_FPS / 50))
+
+
+def split_ranges(total_samples: int, chunk_samples: int) -> list[tuple[int, int]]:
+    ranges = []
+    start = 0
+    while start < total_samples:
+        end = min(total_samples, start + chunk_samples)
+        ranges.append((start, end))
+        start = end
+    if len(ranges) > 1 and predicted_len_from_samples(ranges[-1][1] - ranges[-1][0]) < 2:
+        prev_start, _ = ranges[-2]
+        _, last_end = ranges[-1]
+        ranges = ranges[:-2] + [(prev_start, last_end)]
+    return ranges
+
+
+def load_region(path: Path) -> list[int]:
+    return [int(i) for i in path.read_text().strip().split(", ") if i]
+
+
+def compute_biwi_metrics(gt_flat: np.ndarray, pred_flat: np.ndarray, template_flat: np.ndarray) -> dict[str, float]:
+    mouth_map = load_region(Path("data/biwi/regions/lve.txt"))
+    upper_map = load_region(Path("data/biwi/regions/fdd.txt"))
+    gt = gt_flat.reshape(-1, BIWI_N_VERTS, 3)
+    pred = pred_flat.reshape(-1, BIWI_N_VERTS, 3)
+    template = template_flat.reshape(1, BIWI_N_VERTS, 3)
+    eval_len = min(gt.shape[0], pred.shape[0])
+    gt = gt[:eval_len]
+    pred = pred[:eval_len]
+
+    mouth_sq = np.array([np.square(gt[:, v, :] - pred[:, v, :]) for v in mouth_map])
+    mouth_sq = np.transpose(mouth_sq, (1, 0, 2))
+    lve = float(np.max(np.sum(mouth_sq, axis=2), axis=1).mean())
+
+    def upper_variance(motion: np.ndarray) -> float:
+        upper_sq = np.array([np.square(motion[:, v, :]) for v in upper_map])
+        upper_sq = np.transpose(upper_sq, (1, 0, 2))
+        return float(np.mean(np.std(np.sum(upper_sq, axis=2), axis=0)))
+
+    fdd = upper_variance(gt - template) - upper_variance(pred - template)
+    pred_lip = np.linalg.norm(pred[:, BIWI_LIP_UPPER_IDS, :] - pred[:, BIWI_LIP_DOWNER_IDS, :], axis=-1)
+    gt_lip = np.linalg.norm(gt[:, BIWI_LIP_UPPER_IDS, :] - gt[:, BIWI_LIP_DOWNER_IDS, :], axis=-1)
+    mod = float(np.mean(np.abs(pred_lip - gt_lip), axis=1).mean())
+    return {"LVE": lve, "FDD": float(fdd), "abs_FDD": float(abs(fdd)), "MOD": mod, "eval_len": int(eval_len)}
+
+
+def boundary_metrics(pred_flat: np.ndarray, chunk_lengths: list[int]) -> dict[str, float | None]:
+    if not chunk_lengths or len(chunk_lengths) < 2:
+        return {"boundary_l2_mean": None, "boundary_lip_l2_mean": None}
+    pred = pred_flat.reshape(-1, BIWI_N_VERTS, 3)
+    boundaries = np.cumsum(chunk_lengths)[:-1]
+    l2_values = []
+    lip_values = []
+    lip_ids = BIWI_LIP_UPPER_IDS.tolist() + BIWI_LIP_DOWNER_IDS.tolist()
+    for boundary in boundaries:
+        if boundary <= 0 or boundary >= pred.shape[0]:
+            continue
+        jump = pred[boundary] - pred[boundary - 1]
+        l2_values.append(float(np.linalg.norm(jump)))
+        lip_values.append(float(np.linalg.norm(jump[lip_ids])))
+    return {
+        "boundary_l2_mean": float(np.mean(l2_values)) if l2_values else None,
+        "boundary_lip_l2_mean": float(np.mean(lip_values)) if lip_values else None,
+    }
+
+
+def manifest_path(root: Path, protocol: str) -> Path:
+    return root / "concat_dataset" / f"manifest_{protocol}.json"
+
+
+def read_manifest(root: Path, protocol: str) -> dict[str, Any]:
+    return read_json(manifest_path(root, protocol))
+
+
+def source_sentence_ids(clip: dict[str, Any]) -> list[int]:
+    return [int(seg["clip"].split("_e")[-1]) for seg in clip.get("source_segments", [])]
+
+
+def selected_clip_subset(manifest: dict[str, Any], clip_names: list[str] | None) -> list[dict[str, Any]]:
+    if not clip_names:
+        return list(manifest["clips"])
+    keep = set(clip_names)
+    return [clip for clip in manifest["clips"] if clip["name"] in keep or clip["subject"] in keep]
+
+
+def args_cfg_path(cfg: Any) -> str:
+    return str(getattr(cfg, "_source_cfg_path", DEFAULT_CFG))
+
+
+def aggregate(rows: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        groups[tuple(row.get(key) for key in keys)].append(row)
+    out = []
+    for key, group in sorted(groups.items(), key=lambda item: tuple(str(x) for x in item[0])):
+        agg_row = {name: value for name, value in zip(keys, key)}
+        agg_row["rows"] = len(group)
+        agg_row["num_subjects"] = len({row["subject"] for row in group})
+        agg_row["subjects"] = ",".join(sorted({row["subject"] for row in group}))
+        for metric in METRIC_FIELDS:
+            vals = [row.get(metric) for row in group if row.get(metric) is not None and row.get(metric) != ""]
+            vals_f = [float(value) for value in vals]
+            agg_row[f"{metric}_mean"] = float(np.mean(vals_f)) if vals_f else None
+            agg_row[f"{metric}_std"] = float(np.std(vals_f, ddof=0)) if vals_f else None
+        out.append(agg_row)
+    return out
 
 
 def set_seed(seed: int) -> None:
